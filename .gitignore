@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Xcode 用户/构建产物
+DerivedData/
+build/
+_simbuild/
+_qwsim/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+# 临时
+*.log

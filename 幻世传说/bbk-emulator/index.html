@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>幻世传说</title>
+<style>
+  :root{ color-scheme: dark; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; touch-action:manipulation; user-select:none; }
+  html,body{ margin:0; height:100%; overflow:hidden; background:#000; }
+
+  /* ★显示画布: realtime.js 用 getElementById('fb'); 像素 960x720(=320x240 的3倍)保证放大清晰★ */
+  #fb{ position:fixed; background:#12150f; image-rendering:pixelated; image-rendering:crisp-edges; }
+
+  /* ===== 横屏: 画面高度保持、宽度按 4:3 缩短、居中; 方向键左下, 战斗键右下, 其余顶部两侧 ===== */
+  #fb{ left:50%; top:44%; transform:translate(-50%,-50%); height:82vh; width:auto; aspect-ratio:4/3; }
+
+  .btn{ display:flex; align-items:center; justify-content:center; background:rgba(33,38,45,.86);
+        border:1px solid #3a424d; border-radius:10px; color:#dfe7ef; font:600 13px/1 -apple-system,system-ui; line-height:1; }
+  .btn.on{ background:#388bfd; border-color:#58a6ff; color:#fff; }
+  .btn small{ display:block; font-size:8px; opacity:.55; margin-top:2px; font-weight:400; }
+
+  #padL{ position:fixed; z-index:6; display:grid; grid-template-columns:repeat(3,46px); grid-template-rows:repeat(3,46px); gap:4px; }
+  #padL .sp{ visibility:hidden; }
+  #padCombat{ position:fixed; z-index:6; display:grid; grid-template-columns:repeat(4,50px); gap:6px; }
+  #padCombat .btn{ height:42px; flex-direction:column; }
+  #padTop{ position:fixed; z-index:6; display:flex; flex-wrap:wrap; gap:5px; justify-content:center; }
+  #padTop .btn{ width:44px; height:32px; flex-direction:column; font-size:11px; }
+
+  /* 横屏定位 */
+  @media (orientation:landscape){
+    #padL{ left:calc(env(safe-area-inset-left) + 10px); bottom:calc(env(safe-area-inset-bottom) + 12px); }
+    #padCombat{ right:calc(env(safe-area-inset-right) + 10px); bottom:calc(env(safe-area-inset-bottom) + 12px); grid-template-columns:repeat(4,52px); }
+    #padTop{ left:8px; right:8px; top:calc(env(safe-area-inset-top) + 6px); max-width:100%; }
+    #padTop .half-l{ } /* 其余键在横屏顶部一排铺开(画面已居中, 顶部留白) */
+  }
+
+  /* ===== 竖屏(默认): 画面置顶(避开原生导航栏)、等比居中; 功能键一排在其下; 方向左下+战斗右下沉底 =====
+     尺寸按窄屏(~390pt)适配: padL 宽 3×50+gap≈158, padCombat 宽 4×46+gap≈196, 两者左右分列不重叠不裁切; padTop 用 left/right 边界 + wrap 安全换行。 */
+  @media (orientation:portrait){
+    #fb{ top:calc(env(safe-area-inset-top) + 54px); left:50%; transform:translateX(-50%); width:96vw; height:auto; max-height:52vh; aspect-ratio:4/3; }
+    #padTop{ left:8px; right:8px; top:calc(env(safe-area-inset-top) + 54px + 72vw + 10px); }
+    #padTop .btn{ width:44px; height:32px; }
+    #padL{ left:calc(env(safe-area-inset-left) + 12px); bottom:calc(env(safe-area-inset-bottom) + 20px); grid-template-columns:repeat(3,50px); grid-template-rows:repeat(3,50px); gap:4px; }
+    #padCombat{ right:calc(env(safe-area-inset-right) + 12px); bottom:calc(env(safe-area-inset-bottom) + 20px); grid-template-columns:repeat(4,46px); gap:4px; }
+    #padCombat .btn{ height:46px; }
+  }
+
+  button#run{ position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:20;
+    background:#238636; color:#fff; border:0; border-radius:10px; padding:12px 22px; font-size:16px; }
+  button#run[hidden]{ display:none; }
+  #out{ display:none; }
+  #hud{ position:fixed; top:calc(env(safe-area-inset-top) + 2px); right:8px; color:#6b7684; font:10px/1.3 monospace; z-index:9; opacity:.4; }
+
+  /* ★幻世传说 正式加载层: 下载进度 + 分阶段状态, 首帧渲染后才收起★ */
+  #booting{ position:fixed; inset:0; z-index:50; background:radial-gradient(circle at 50% 40%, #16202b, #05070a); display:flex; align-items:center; justify-content:center; transition:opacity .35s; }
+  #booting.hidden{ opacity:0; pointer-events:none; }
+  .bootbox{ width:72%; max-width:320px; text-align:center; color:#dfe7ef; }
+  .boottitle{ font:700 22px/1.2 -apple-system,system-ui; letter-spacing:3px; margin-bottom:20px; color:#e8c46a; }
+  #bootText{ font:13px/1.5 -apple-system,system-ui; opacity:.85; margin-bottom:14px; min-height:20px; }
+  .boottrack{ height:8px; background:rgba(255,255,255,.14); border-radius:6px; overflow:hidden; }
+  #bootBar{ height:100%; width:0%; background:linear-gradient(90deg,#388bfd,#58a6ff); border-radius:6px; transition:width .2s; }
+  #bootPct{ font:12px/1 monospace; opacity:.7; margin-top:9px; }
+</style>
+<script>
+/* 诊断: 收集资源加载失败 + JS 异常, 供左上角面板显示 */
+window.__ERRS=[];
+window.addEventListener('error',function(e){try{
+  if(e.target&&e.target.tagName){window.__ERRS.push('LOADERR '+e.target.tagName+' '+(e.target.getAttribute('src')||e.target.href||'?'));}
+  else{window.__ERRS.push('JSERR '+(e.message||'?'));}
+}catch(_){}},true);
+</script>
+</head>
+<body>
+  <div id="diag" style="position:fixed;left:4px;bottom:4px;z-index:99;background:rgba(0,0,0,.88);color:#0f0;font:10px/1.3 monospace;white-space:pre-wrap;padding:5px 7px;border:1px solid #063;max-width:96vw;pointer-events:none;opacity:.72;"></div>
+  <canvas id="fb" width="960" height="720"></canvas>
+  <div id="hud"></div>
+  <pre id="out"></pre>
+  <button id="run">装载并开始</button>
+
+  <!-- 幻世传说 加载层(首帧渲染后隐藏) -->
+  <div id="booting">
+    <div class="bootbox">
+      <div class="boottitle">幻世传说</div>
+      <div id="bootText">正在启动…</div>
+      <div class="boottrack"><div id="bootBar"></div></div>
+      <div id="bootPct">0%</div>
+    </div>
+  </div>
+
+  <!-- 方向键(左下): realtime.js 用 [data-dir] 绑 pressDir/releaseDir 持续行走 -->
+  <div id="padL">
+    <div class="sp"></div><div class="btn" data-dir="146">▲</div><div class="sp"></div>
+    <div class="btn" data-dir="145">◀</div><div class="sp"></div><div class="btn" data-dir="153">▶</div>
+    <div class="sp"></div><div class="btn" data-dir="152">▼</div><div class="sp"></div>
+  </div>
+
+  <!-- 战斗键(右下): 技能1-4 / 普攻 / 技攻 / 吃药1-2 -->
+  <div id="padCombat">
+    <div class="btn" data-char="Q">技1<small>Q</small></div>
+    <div class="btn" data-char="W">技2<small>W</small></div>
+    <div class="btn" data-char="E">技3<small>E</small></div>
+    <div class="btn" data-char="R">技4<small>R</small></div>
+    <div class="btn" data-char="D">普攻<small>D</small></div>
+    <div class="btn" data-char="F">技攻<small>F</small></div>
+    <div class="btn" data-char="A">药1<small>A</small></div>
+    <div class="btn" data-char="S">药2<small>S</small></div>
+  </div>
+
+  <!-- 其余键(上方): 确认/返回/功能 + 任务/地图/状态/行囊/技能/系统 -->
+  <div id="padTop">
+    <div class="btn" data-key="7">确认</div>
+    <div class="btn" data-key="150">返回</div>
+    <div class="btn" data-key="112">功能</div>
+    <div class="btn" data-char="T">任务<small>T</small></div>
+    <div class="btn" data-char="M">地图<small>M</small></div>
+    <div class="btn" data-char="I">状态<small>I</small></div>
+    <div class="btn" data-char="O">行囊<small>O</small></div>
+    <div class="btn" data-char="J">技能<small>J</small></div>
+    <div class="btn" data-char="V">系统<small>V</small></div>
+  </div>
+
+  <script src="mips.js"></script>
+  <script src="os.js"></script>
+  <script src="realtime.js"></script>
+  <script>
+  /* ★ data-char 按钮(战斗键/快捷键)的事件已由 realtime.js bindInput 里的事件委托统一处理,
+     不再需要这里的 setInterval 轮询绑定(旧方案在 boot 加载慢时会过期导致按钮失效)。 ★ */
+  </script>
+  <script>
+  /* ★诊断面板: 每 0.4s 把关键状态印到左上角 #diag★ */
+  (function(){
+    function d(){
+      var el=document.getElementById('diag'); if(!el) return;
+      var t='';
+      t+='BBK='+(typeof window.BBK)+' BBK_OS='+(typeof window.BBK_OS)+' __rt='+(typeof window.__rt)+'\n';
+      if(window.__ERRS&&window.__ERRS.length) t+='ERRS:\n'+window.__ERRS.slice(-8).join('\n')+'\n';
+      try{ if(window.__rt&&window.__rt.st){var s=window.__rt.st(); t+='pc='+s.pc+' run='+s.running+' msg='+s.msg+' q='+s.qLen+' steps='+s.steps+'\n';}}catch(e){t+='stE '+e+'\n';}
+      try{ if(window.__rt&&window.__rt._m){var m=window.__rt._m(); t+='m='+!!m+(m?(' blocked='+m._blockedNow):'')+'\n';}}catch(e){}
+      el.textContent=t||'loading...';
+    }
+    window.addEventListener('load',function(){ d(); setInterval(d,400); });
+    var n=0, iv=setInterval(function(){ d(); if(++n>50)clearInterval(iv); },300);
+  })();
+  </script>
+</body>
+</html>
